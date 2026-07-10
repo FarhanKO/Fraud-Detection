@@ -6,7 +6,6 @@ from sklearn.preprocessing import RobustScaler
 
 from src.feature_engineering import build_feature_engineering_transformer
 
-
 def load_data(path, target_col="Class"):
     df = pd.read_csv(path)
     return df.dropna(subset=[target_col])
