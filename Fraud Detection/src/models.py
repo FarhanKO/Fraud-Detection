@@ -153,4 +153,21 @@ def fraud_cascade_predict(
             "anomaly_score": float(anomaly_score),
         }
  
-
+    supervised_probability = cb_model.predict_proba(processed)[0, 1]
+    supervised_threshold = (
+        high_amount_prob_threshold if tx_amount > high_amount_supervised_threshold else default_prob_threshold
+    )
+    if supervised_probability >= supervised_threshold:
+        return {
+            "status": "REJECTED_LAYER_2",
+            "reason": "Matches historical fraud pattern",
+            "amount": tx_amount,
+            "fraud_probability": float(supervised_probability),
+        }
+ 
+    return {
+        "status": "APPROVED",
+        "reason": "Passed both structural and pattern-matching checks",
+        "amount": tx_amount,
+        "fraud_probability": float(supervised_probability),
+    }
