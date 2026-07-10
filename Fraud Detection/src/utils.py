@@ -36,4 +36,13 @@ def drift_report(X_train, X_test, columns=None):
     return df_psi
 
 
+def save_artifact(obj, filename, models_dir=MODELS_DIR):
+    os.makedirs(models_dir, exist_ok=True)
+    path = os.path.join(models_dir, filename)
+    joblib.dump(obj, path)
+    return path
+
+
+def load_artifact(filename, models_dir=MODELS_DIR):
+    return joblib.load(os.path.join(models_dir, filename))
 
