@@ -20,3 +20,13 @@ IMAGES_DIR = BASE_DIR / "images"
 RESULTS_DIR = BASE_DIR / "results"
  
 from assets.sample_transactions import MOCK_LEGIT, MOCK_FRAUD, RAW_COLS  # noqa: E402
+
+
+top_v_features = ["V17", "V14", "V12", "V10", "V16"]  # from the notebook's correlation ranking
+ 
+ 
+def engineer_fraud_features(data):
+    df_feat = data.copy()
+    df_feat["Hour"] = (df_feat["Time"] // 3600) % 24
+    df_feat["Is_Night"] = df_feat["Hour"].apply(lambda x: 1 if 0 <= x <= 5 else 0)
+    df_feat["Log_Amount"] = np.log1p(df_feat["Amount"])
