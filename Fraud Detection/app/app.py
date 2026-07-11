@@ -211,3 +211,31 @@ tabs = st.tabs([
     "📊 Overview", "📈 Model Performance", "🧠 Explainability",
     "⚡ Live Transaction Check", "📁 Batch Scoring", "ℹ️ How It Works",
 ])
+
+
+with tabs[0]:
+    c1, c2, c3, c4 = st.columns(4)
+    for col, label, value in zip(
+        [c1, c2, c3, c4],
+        ["Total Transactions", "Confirmed Fraud", "Fraud Rate", "Production Model PR-AUC"],
+        ["284,807", "492", "0.172%", "0.804 (calibrated CatBoost)"],
+    ):
+        col.markdown(
+            f"""<div class="fs-card"><div class="fs-metric-label">{label}</div>
+            <div class="fs-metric-value">{value}</div></div>""",
+            unsafe_allow_html=True,
+        )
+ 
+    dashboard_img = IMAGES_DIR / "dashboard.png"
+    if dashboard_img.exists():
+        st.image(str(dashboard_img), width='stretch')
+ 
+    st.markdown("#### Class Imbalance")
+    dist_df = pd.DataFrame({"Class": ["Legitimate", "Fraud"], "Count": [284315, 492]})
+    fig = px.bar(
+        dist_df, x="Class", y="Count", color="Class", text="Count", log_y=True,
+        color_discrete_map={"Legitimate": "#3b82f6", "Fraud": "#ef4444"},
+    )
+    fig.update_layout(showlegend=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font_color="#e2e8f0")
+    st.plotly_chart(fig, width='stretch')
+    st.caption("Log scale — fraud is 0.172% of all transactions, which is why accuracy alone is a meaningless metric here.")
