@@ -31,13 +31,11 @@ def engineer_fraud_features(data):
     df_feat["Is_Night"] = df_feat["Hour"].apply(lambda x: 1 if 0 <= x <= 5 else 0)
     df_feat["Log_Amount"] = np.log1p(df_feat["Amount"])
 
-
     scaler = RobustScaler()
     df_feat["Scaled_Amount"] = scaler.fit_transform(df_feat[["Amount"]])
     for v in top_v_features:
         df_feat[f"{v}_x_Amount"] = df_feat[v] * df_feat["Log_Amount"]
     return df_feat.drop(columns=["Time", "Amount"])
-
 
 st.set_page_config(
     page_title="Fraud Sentinel | Dual-Layer Detection",
@@ -45,3 +43,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+_css_path = APP_DIR / "assets" / "style.css"
+if _css_path.exists():
+    st.markdown(f"<style>{_css_path.read_text()}</style>", unsafe_allow_html=True)
