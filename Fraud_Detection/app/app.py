@@ -10,6 +10,10 @@ from sklearn.preprocessing import RobustScaler
 
 # ──────────────────────────────────────────────────────────────────────────
 # PATHS
+# Resolved relative to this file rather than the process's working directory,
+# so the app behaves the same whether Streamlit is launched from the repo
+# root or from inside app/. A cwd-relative path is a common cause of
+# "works locally, breaks on Streamlit Cloud" bugs.
 # ──────────────────────────────────────────────────────────────────────────
 APP_DIR = Path(__file__).resolve().parent
 BASE_DIR = APP_DIR.parent
@@ -46,6 +50,18 @@ def engineer_fraud_features(data):
     df_feat["Hour"] = (df_feat["Time"] // 3600) % 24
     df_feat["Is_Night"] = df_feat["Hour"].apply(lambda x: 1 if 0 <= x <= 5 else 0)
     df_feat["Log_Amount"] = np.log1p(df_feat["Amount"])
+    # KNOWN LIMITATION (inherited unchanged from the training notebook, and
+    # deliberately NOT "fixed" here): this RobustScaler is fit fresh on
+    # whatever batch is passed in, rather than on a fixed training-set
+    # distribution. Over a few hundred rows this is a reasonable
+    # approximation of the real scale; for a *single-row* prediction,
+    # fit_transform on one point always yields Scaled_Amount = 0.0,
+    # regardless of the actual amount. Because layer2_calibrated_catboost.pkl
+    # was trained against this exact (batch-refit) behavior, "fixing" the
+    # scaling here would feed the frozen classifier an out-of-distribution
+    # input — so single-row scoring keeps this limitation for now. The
+    # correct long-term fix is retraining fraud_processor.pkl with a
+    # RobustScaler fit once on X_train and reused for every future call.
     scaler = RobustScaler()
     df_feat["Scaled_Amount"] = scaler.fit_transform(df_feat[["Amount"]])
     for v in top_v_features:
