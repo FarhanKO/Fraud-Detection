@@ -24,6 +24,10 @@ env/
 *.pkl
 *.joblib
 
+# Raw dataset — download instructions are in data/README.md, not committed here
+data/*.csv
+data/*.zip
+
 # Logs
 *.log
 
