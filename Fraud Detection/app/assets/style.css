@@ -1,0 +1,63 @@
+/* Fraud Sentinel — dark theme */
+
+:root {
+    --fs-bg: #0b1120;
+    --fs-panel: #121a2b;
+    --fs-border: #223049;
+    --fs-accent: #3b82f6;
+    --fs-danger: #ef4444;
+    --fs-warn: #f59e0b;
+    --fs-good: #22c55e;
+    --fs-text-dim: #94a3b8;
+}
+
+.stApp { background: linear-gradient(180deg, #0b1120 0%, #0e1626 100%); }
+section[data-testid="stSidebar"] { background: #0e1626; border-right: 1px solid var(--fs-border); }
+
+h1, h2, h3 { letter-spacing: -0.02em; }
+
+.fs-hero {
+    padding: 1.6rem 1.8rem;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(59,130,246,0.14), rgba(34,197,94,0.06));
+    border: 1px solid var(--fs-border);
+    margin-bottom: 1.4rem;
+}
+.fs-hero h1 { margin: 0 0 0.25rem 0; font-size: 1.9rem; }
+.fs-hero p { margin: 0; color: var(--fs-text-dim); font-size: 0.95rem; }
+
+.fs-card {
+    background: var(--fs-panel);
+    border: 1px solid var(--fs-border);
+    border-radius: 14px;
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 0.9rem;
+}
+.fs-metric-label { color: var(--fs-text-dim); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.fs-metric-value { font-size: 1.7rem; font-weight: 700; margin-top: 0.15rem; }
+
+.fs-badge {
+    display: inline-block; padding: 0.25rem 0.7rem; border-radius: 999px;
+    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em;
+}
+.fs-badge-green { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.35); }
+.fs-badge-amber { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); }
+.fs-badge-red { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.35); }
+
+.fs-verdict {
+    border-radius: 16px; padding: 1.4rem 1.6rem; border: 1px solid var(--fs-border);
+    margin-top: 0.6rem;
+}
+.fs-verdict-approved { background: linear-gradient(135deg, rgba(34,197,94,0.14), rgba(34,197,94,0.03)); border-color: rgba(34,197,94,0.35); }
+.fs-verdict-layer1 { background: linear-gradient(135deg, rgba(239,68,68,0.18), rgba(239,68,68,0.04)); border-color: rgba(239,68,68,0.4); }
+.fs-verdict-layer2 { background: linear-gradient(135deg, rgba(245,158,11,0.18), rgba(245,158,11,0.04)); border-color: rgba(245,158,11,0.4); }
+.fs-verdict h2 { margin-top: 0; }
+.fs-verdict-detail { color: var(--fs-text-dim); font-size: 0.92rem; margin-top: 0.3rem; }
+
+.fs-step { display:flex; align-items:center; gap:0.6rem; padding:0.5rem 0; }
+.fs-step-num {
+    width: 26px; height:26px; border-radius:50%; background: var(--fs-accent);
+    color:white; font-weight:700; font-size:0.8rem; display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+hr { border-color: var(--fs-border); }
+.fs-footer { color: var(--fs-text-dim); font-size: 0.8rem; text-align:center; padding-top: 2rem; }
