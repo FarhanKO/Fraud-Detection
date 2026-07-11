@@ -164,4 +164,33 @@ def cascade_predict_batch(df_in, processor, layer1_model, layer2_model):
     out["Decision"] = decision
     return out
 
-
+with st.sidebar:
+    st.markdown("### 🛡️ Fraud Sentinel")
+    st.caption("Dual-layer cascade — served from the real trained artifacts, not a synthetic demo.")
+    st.divider()
+ 
+    use_ae = st.checkbox(
+        "Use Deep Autoencoder for Layer 1",
+        value=False,
+        help="Matches the notebook's original Layer 1 exactly, but requires pyod + torch "
+             "(not in requirements.txt by default — heavy for cloud deployment). "
+             "Isolation Forest is the recommended default.",
+    )
+ 
+    st.divider()
+    st.markdown("**Training dataset**")
+    st.caption("284,807 transactions · 492 confirmed fraud (0.172%) · European cardholders, Sept 2013")
+ 
+    st.divider()
+    st.markdown("[📓 View training notebook](https://github.com/FarhanKO/Fraud-Detection/blob/main/Fraud_Detection.ipynb)")
+    st.markdown("[📄 Repo README](https://github.com/FarhanKO/Fraud-Detection)")
+ 
+try:
+    processor, layer1_model, layer2_model, engine_name = load_models(use_ae)
+    models_loaded = True
+except FileNotFoundError as e:
+    models_loaded = False
+    st.error(
+        f"Couldn't find a required model file: {e}. Make sure `models/` contains "
+        "fraud_processor.pkl, layer1_isolation_forest.pkl, and layer2_calibrated_catboost.pkl."
+    )
