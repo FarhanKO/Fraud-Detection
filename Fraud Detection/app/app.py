@@ -37,3 +37,11 @@ def engineer_fraud_features(data):
     for v in top_v_features:
         df_feat[f"{v}_x_Amount"] = df_feat[v] * df_feat["Log_Amount"]
     return df_feat.drop(columns=["Time", "Amount"])
+
+
+st.set_page_config(
+    page_title="Fraud Sentinel | Dual-Layer Detection",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
