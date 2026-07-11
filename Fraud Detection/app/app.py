@@ -239,3 +239,44 @@ with tabs[0]:
     fig.update_layout(showlegend=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font_color="#e2e8f0")
     st.plotly_chart(fig, width='stretch')
     st.caption("Log scale — fraud is 0.172% of all transactions, which is why accuracy alone is a meaningless metric here.")
+
+with tabs[1]:
+    metrics_path = RESULTS_DIR / "metrics.csv"
+    if metrics_path.exists():
+        df_metrics = pd.read_csv(metrics_path)
+        st.markdown("#### Supervised Model Comparison")
+        st.dataframe(
+            df_metrics.style.background_gradient(cmap="Greens", subset=["PR_AUC", "ROC_AUC"])
+            .background_gradient(cmap="Reds", subset=["Banking_Risk_Cost_USD"])
+            .format({
+                "Accuracy": "{:.4f}", "Precision_Fraud": "{:.4f}", "Recall_Fraud": "{:.4f}",
+                "F1_Score_Fraud": "{:.4f}", "ROC_AUC": "{:.4f}", "PR_AUC": "{:.4f}",
+                "Missed_Fraud_Amount_USD": "${:,.2f}", "Banking_Risk_Cost_USD": "${:,.2f}",
+            }),
+            width='stretch',
+        )
+    else:
+        st.warning(f"results/metrics.csv not found at {metrics_path}.")
+ 
+    st.markdown("#### Production Model — Isotonic-Calibrated CatBoost")
+    p1, p2, p3, p4, p5 = st.columns(5)
+    for col, label, value in zip(
+        [p1, p2, p3, p4, p5],
+        ["Precision", "Recall", "F1-Score", "ROC-AUC", "PR-AUC"],
+        ["0.9483", "0.7333", "0.8271", "0.9793", "0.8042"],
+    ):
+        col.markdown(
+            f"""<div class="fs-card"><div class="fs-metric-label">{label}</div>
+            <div class="fs-metric-value">{value}</div></div>""",
+            unsafe_allow_html=True,
+        )
+    st.caption("Isotonic calibration trades a little recall for substantially better precision and much more reliable probability estimates — see Explainability for the calibration curve.")
+ 
+    for fname, caption in [
+        ("roc_pr_curve.png", "ROC and Precision-Recall curves across every supervised model."),
+        ("model_comparison.png", "Head-to-head comparison across accuracy, precision, recall, F1, and AUC."),
+        ("threshold_analysis.png", "Confusion matrix and business-impact sensitivity across decision thresholds."),
+    ]:
+        fpath = IMAGES_DIR / fname
+        if fpath.exists():
+            st.image(str(fpath), width='stretch', caption=caption)
