@@ -194,3 +194,20 @@ except FileNotFoundError as e:
         f"Couldn't find a required model file: {e}. Make sure `models/` contains "
         "fraud_processor.pkl, layer1_isolation_forest.pkl, and layer2_calibrated_catboost.pkl."
     )
+
+st.markdown(
+    """
+    <div class="fs-hero">
+        <h1>🛡️ Fraud Sentinel</h1>
+        <p>A dual-layer fraud detection cascade — an unsupervised anomaly gate followed by a
+        calibrated supervised classifier — served here from the actual serialized models
+        trained and evaluated in the accompanying notebook.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+ 
+tabs = st.tabs([
+    "📊 Overview", "📈 Model Performance", "🧠 Explainability",
+    "⚡ Live Transaction Check", "📁 Batch Scoring", "ℹ️ How It Works",
+])
