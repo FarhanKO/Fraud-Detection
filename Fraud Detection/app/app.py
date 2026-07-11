@@ -74,3 +74,15 @@ def load_models(use_autoencoder: bool):
  
     return processor, layer1, layer2, engine_name
 
+def layer1_is_anomaly(model, processed) -> bool:
+    pred = model.predict(processed)
+    if "pyod" in type(model).__module__:
+        return bool(pred[0] == 1)
+    return bool(pred[0] == -1)
+ 
+ 
+def layer1_score(model, processed) -> float:
+    """Higher = more anomalous, regardless of which engine is active."""
+    if "pyod" in type(model).__module__:
+        return float(model.decision_function(processed)[0])
+    return float(-model.score_samples(processed)[0])
