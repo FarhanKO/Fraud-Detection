@@ -86,3 +86,82 @@ def layer1_score(model, processed) -> float:
     if "pyod" in type(model).__module__:
         return float(model.decision_function(processed)[0])
     return float(-model.score_samples(processed)[0])
+
+
+def cascade_predict_single(row_df, processor, layer1_model, layer2_model):
+    tx_amount = float(row_df["Amount"].values[0])
+    processed = processor.transform(row_df[RAW_COLS])
+ 
+    if layer1_is_anomaly(layer1_model, processed):
+        return {
+            "status": "BLOCKED_LAYER1",
+            "label": "🚨 Blocked by Layer 1",
+            "reason": "Flagged as a structural anomaly relative to legitimate transaction history",
+            "action": "Route to fraud-forensics review (possible zero-day pattern)",
+            "amount": tx_amount,
+            "anomaly_score": layer1_score(layer1_model, processed),
+            "probability": None,
+        }
+ 
+    probability = float(layer2_model.predict_proba(processed)[0, 1])
+    threshold = 0.25 if tx_amount > 1000 else 0.50
+ 
+    if probability >= threshold:
+        return {
+            "status": "REJECTED_LAYER2",
+            "label": "❌ Rejected by Layer 2",
+            "reason": "Matches historical fraud behavior profile",
+            "action": "Auto-decline transaction and flag account for review",
+            "amount": tx_amount,
+            "anomaly_score": layer1_score(layer1_model, processed),
+            "probability": probability,
+            "threshold": threshold,
+        }
+ 
+    return {
+        "status": "APPROVED",
+        "label": "✅ Approved",
+        "reason": "Passed both structural and pattern-matching checks",
+        "action": "Authorize secure funds clearance",
+        "amount": tx_amount,
+        "anomaly_score": layer1_score(layer1_model, processed),
+        "probability": probability,
+        "threshold": threshold,
+    }
+ 
+ 
+def cascade_predict_batch(df_in, processor, layer1_model, layer2_model):
+    model_input = df_in[RAW_COLS].copy()
+    processed = processor.transform(model_input)
+    amounts = model_input["Amount"].values
+ 
+    l1_preds = layer1_model.predict(processed)
+    if "pyod" in type(layer1_model).__module__:
+        blocked = l1_preds == 1
+        scores = layer1_model.decision_function(processed)
+    else:
+        blocked = l1_preds == -1
+        scores = -layer1_model.score_samples(processed)
+ 
+    probs = np.full(len(df_in), np.nan)
+    remaining = ~blocked
+    if remaining.any():
+        probs[remaining] = layer2_model.predict_proba(processed[remaining])[:, 1]
+ 
+    thresholds = np.where(amounts > 1000, 0.25, 0.50)
+    rejected = remaining & (probs >= thresholds)
+    approved = remaining & ~rejected
+ 
+    decision = np.select(
+        [blocked, rejected, approved],
+        ["Blocked (Layer 1)", "Rejected (Layer 2)", "Approved"],
+        default="Approved",
+    )
+ 
+    out = df_in.copy()
+    out["Anomaly_Score"] = scores
+    out["Fraud_Probability"] = probs
+    out["Decision"] = decision
+    return out
+
+
