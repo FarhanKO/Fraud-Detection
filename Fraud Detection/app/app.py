@@ -9,7 +9,7 @@ import streamlit as st
 from sklearn.preprocessing import RobustScaler
 
 # ──────────────────────────────────────────────────────────────────────────
-# "works locally, breaks on Streamlit Cloud" bugs.
+# PATHS
 # ──────────────────────────────────────────────────────────────────────────
 APP_DIR = Path(__file__).resolve().parent
 BASE_DIR = APP_DIR.parent
@@ -27,6 +27,17 @@ from assets.sample_transactions import MOCK_LEGIT, MOCK_FRAUD, RAW_COLS  # noqa:
 # ──────────────────────────────────────────────────────────────────────────
 # COMPATIBILITY SHIM — DO NOT REMOVE
 # ──────────────────────────────────────────────────────────────────────────
+# models/fraud_processor.pkl was pickled straight out of the training
+# notebook, where `engineer_fraud_features` was a top-level function in the
+# notebook's `__main__` namespace, closing over a global `top_v_features`.
+# Python's pickle format stores plain functions *by reference* (module +
+# name), never by bytecode — so unpickling this FunctionTransformer needs a
+# function literally named `engineer_fraud_features` to exist in `__main__`
+# (this script, since Streamlit runs it as the entry point) at load time.
+# It's recreated verbatim below so `joblib.load(fraud_processor.pkl)`
+# succeeds. Without this block the app fails with:
+#   AttributeError: Can't get attribute 'engineer_fraud_features' on
+#   <module '__main__' ...>
 top_v_features = ["V17", "V14", "V12", "V10", "V16"]  # from the notebook's correlation ranking
 
 
@@ -66,6 +77,16 @@ def load_models(use_autoencoder: bool):
 
     if use_autoencoder:
         try:
+            # Cheap pre-check before touching the pickle at all. PyOD's
+            # AutoEncoder is a thin wrapper around a PyTorch model, and in
+            # environments where `pyod` is installed but `torch` is NOT
+            # (a real possibility — they're separate packages), unpickling
+            # or using it doesn't raise a clean Python exception: it can
+            # hard-crash the whole process (verified — no try/except can
+            # catch that). Confirming both imports succeed first keeps this
+            # a normal, catchable failure instead.
+            import torch  # noqa: F401
+            import pyod  # noqa: F401
             layer1 = joblib.load(MODELS_DIR / "layer1_autoencoder.pkl")
             engine_name = "Deep Autoencoder (PyOD)"
         except Exception as e:  # noqa: BLE001 — deliberately broad, this is a soft fallback
@@ -148,6 +169,20 @@ def cascade_predict_single(row_df, processor, layer1_model, layer2_model):
         "probability": probability,
         "threshold": threshold,
     }
+
+
+def safe_image(path: Path, **kwargs):
+    """st.image, but a missing/empty/corrupt file degrades to a caption
+    instead of crashing the whole script run. (Caught in testing: an empty
+    placeholder PNG committed to images/ took down the entire app with an
+    uncaught PIL.UnidentifiedImageError — st.image has no built-in guard
+    against that.)"""
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    try:
+        st.image(str(path), **kwargs)
+    except Exception:  # noqa: BLE001 — genuinely any failure here should degrade, not crash
+        st.caption(f"⚠️ Couldn't render {path.name} — the file may be corrupted or empty.")
 
 
 def cascade_predict_batch(df_in, processor, layer1_model, layer2_model):
@@ -255,9 +290,7 @@ with tabs[0]:
             unsafe_allow_html=True,
         )
 
-    dashboard_img = IMAGES_DIR / "dashboard.png"
-    if dashboard_img.exists():
-        st.image(str(dashboard_img), width='stretch')
+    safe_image(IMAGES_DIR / "dashboard.png", width='stretch')
 
     st.markdown("#### Class Imbalance")
     dist_df = pd.DataFrame({"Class": ["Legitimate", "Fraud"], "Count": [284315, 492]})
@@ -309,9 +342,7 @@ with tabs[1]:
         ("model_comparison.png", "Head-to-head comparison across accuracy, precision, recall, F1, and AUC."),
         ("threshold_analysis.png", "Confusion matrix and business-impact sensitivity across decision thresholds."),
     ]:
-        fpath = IMAGES_DIR / fname
-        if fpath.exists():
-            st.image(str(fpath), width='stretch', caption=caption)
+        safe_image(IMAGES_DIR / fname, width='stretch', caption=caption)
 
 # ──────────────────────────────────────────────────────────────────────────
 # TAB 3 — EXPLAINABILITY
@@ -335,9 +366,7 @@ with tabs[2]:
         ("optimal_cluster_selection.png", "Silhouette analysis used to pick k for the K-Means exploratory clustering."),
         ("anomaly_checker_analysis.png", "Layer 1 anomaly-score separation between legitimate and fraud instances."),
     ]:
-        fpath = IMAGES_DIR / fname
-        if fpath.exists():
-            st.image(str(fpath), width='stretch', caption=caption)
+        safe_image(IMAGES_DIR / fname, width='stretch', caption=caption)
 
 # ──────────────────────────────────────────────────────────────────────────
 # TAB 4 — LIVE TRANSACTION CHECK
