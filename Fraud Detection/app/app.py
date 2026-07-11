@@ -65,3 +65,12 @@ def load_models(use_autoencoder: bool):
                 "environment — they're intentionally left out of requirements.txt to "
                 "keep cloud deployments lightweight. Falling back to Isolation Forest."
             )
+
+            layer1 = joblib.load(MODELS_DIR / "layer1_isolation_forest.pkl")
+            engine_name = "Isolation Forest (fallback)"
+    else:
+        layer1 = joblib.load(MODELS_DIR / "layer1_isolation_forest.pkl")
+        engine_name = "Isolation Forest"
+ 
+    return processor, layer1, layer2, engine_name
+
