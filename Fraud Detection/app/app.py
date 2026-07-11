@@ -47,3 +47,21 @@ st.set_page_config(
 _css_path = APP_DIR / "assets" / "style.css"
 if _css_path.exists():
     st.markdown(f"<style>{_css_path.read_text()}</style>", unsafe_allow_html=True)
+
+
+@st.cache_resource(show_spinner="Loading trained artifacts…")
+def load_models(use_autoencoder: bool):
+    processor = joblib.load(MODELS_DIR / "fraud_processor.pkl")
+    layer2 = joblib.load(MODELS_DIR / "layer2_calibrated_catboost.pkl")
+ 
+    if use_autoencoder:
+        try:
+            layer1 = joblib.load(MODELS_DIR / "layer1_autoencoder.pkl")
+            engine_name = "Deep Autoencoder (PyOD)"
+        except Exception as e:  # noqa: BLE001 — deliberately broad, this is a soft fallback
+            st.warning(
+                f"Couldn't load the Autoencoder Layer 1 model ({type(e).__name__}: {e}). "
+                "This almost always means `pyod`/`torch` aren't installed in this "
+                "environment — they're intentionally left out of requirements.txt to "
+                "keep cloud deployments lightweight. Falling back to Isolation Forest."
+            )
