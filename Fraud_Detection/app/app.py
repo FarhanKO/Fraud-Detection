@@ -34,7 +34,19 @@ ZERO_TX = {col: 0.0 for col in RAW_COLS}
 # ──────────────────────────────────────────────────────────────────────────
 # COMPATIBILITY SHIM — DO NOT REMOVE
 # ──────────────────────────────────────────────────────────────────────────
+# models/fraud_processor.pkl was pickled straight out of the training
+# notebook, where `engineer_fraud_features` was a top-level function in the
+# notebook's `__main__` namespace, closing over a global `top_v_features`.
+# Python's pickle format stores plain functions *by reference* (module +
+# name), never by bytecode — so unpickling this FunctionTransformer needs a
+# function literally named `engineer_fraud_features` to exist in `__main__`
+# (this script, since Streamlit runs it as the entry point) at load time.
+# It's recreated verbatim below so `joblib.load(fraud_processor.pkl)`
+# succeeds. Without this block the app fails with:
+#   AttributeError: Can't get attribute 'engineer_fraud_features' on
+#   <module '__main__' ...>
 top_v_features = ["V17", "V14", "V12", "V10", "V16"]  # from the notebook's correlation ranking
+
 
 def engineer_fraud_features(data):
     df_feat = data.copy()
@@ -393,6 +405,23 @@ def load_models(use_autoencoder: bool):
                 layer1 = joblib.load(MODELS_DIR / "layer1_autoencoder.pkl")
             finally:
                 torch.load = _original_torch_load  # don't leave the patch in place globally
+
+            # The map_location patch above only remaps *tensor storages*
+            # while unpickling — it does nothing for a plain attribute like
+            # `self.device`. PyOD's AutoEncoder stores that as an ordinary
+            # `torch.device` object, resolved once at fit time and pickled
+            # as-is; since training ran on a GPU box, it survives unpickling
+            # as literally `cuda:0` no matter what map_location says. Every
+            # later call — `.predict()`, `.decision_function()` — does
+            # `x.to(self.device)` internally, and on a host with no NVIDIA
+            # driver at all, that's not a "no GPU found" — it's an attempt
+            # to initialize CUDA itself, which fails harder:
+            #   RuntimeError: Found no NVIDIA driver on your system...
+            # Force every device-carrying attribute back to CPU explicitly.
+            if hasattr(layer1, "device"):
+                layer1.device = torch.device("cpu")
+            if getattr(layer1, "model", None) is not None:
+                layer1.model = layer1.model.to("cpu")
 
             engine_name = "Deep Autoencoder (PyOD)"
             engine_is_full = True
