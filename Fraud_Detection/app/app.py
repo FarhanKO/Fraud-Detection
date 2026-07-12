@@ -359,6 +359,61 @@ def render_cyber_background():
 
 render_cyber_background()
 
+
+# ──────────────────────────────────────────────────────────────────────────
+# SCROLL-TO-TOP ON PAGE CHANGE — Streamlit never actually reloads the
+# browser page when a sidebar widget changes; it patches the DOM over the
+# same websocket connection, so whatever scroll position you were at on the
+# previous page just carries over onto the new one (a freshly-selected page
+# can render already scrolled halfway down). This detects an actual page
+# change and smooth-scrolls back to top when — and only when — that
+# happens, so switching pages doesn't yank the scroll on every rerun (e.g.
+# ticking a checkbox on the *same* page shouldn't trigger it).
+# ──────────────────────────────────────────────────────────────────────────
+def scroll_to_top_on_page_change(current_page: str):
+    """State lives on `window.parent` itself rather than any browser
+    storage API: since Streamlit reruns patch the existing page rather
+    than reloading it, that JS object persists across reruns for the
+    whole browser tab, which is exactly the lifetime this needs."""
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            const doc = window.parent.document;
+            const win = window.parent;
+            const currentPage = {current_page!r};
+
+            if (win.__fsLastPage === undefined) {{
+                win.__fsLastPage = currentPage;  // first load — nothing to scroll away from
+                return;
+            }}
+            if (win.__fsLastPage === currentPage) return;  // same page, some other widget changed
+            win.__fsLastPage = currentPage;
+
+            // Streamlit's actual scrolling element has moved around across
+            // versions (window vs. an inner container), so try every likely
+            // candidate rather than betting on one.
+            const candidates = [
+                doc.querySelector('[data-testid="stAppViewContainer"]'),
+                doc.querySelector('[data-testid="stMain"]'),
+                doc.querySelector('section.main'),
+                doc.scrollingElement,
+                doc.body,
+                win,
+            ];
+            for (const el of candidates) {{
+                if (el && typeof el.scrollTo === 'function') {{
+                    el.scrollTo({{ top: 0, behavior: 'smooth' }});
+                }}
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # MODEL LOADING
 # ──────────────────────────────────────────────────────────────────────────
@@ -628,6 +683,7 @@ with st.sidebar:
 
     st.markdown("**Navigate**")
     page = st.radio("Navigate", PAGES, label_visibility="collapsed", key="nav_page")
+    scroll_to_top_on_page_change(page)
 
     st.divider()
     st.markdown("**System Architecture**")
