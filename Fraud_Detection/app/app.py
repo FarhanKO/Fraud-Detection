@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from sklearn.preprocessing import RobustScaler
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -33,19 +34,7 @@ ZERO_TX = {col: 0.0 for col in RAW_COLS}
 # ──────────────────────────────────────────────────────────────────────────
 # COMPATIBILITY SHIM — DO NOT REMOVE
 # ──────────────────────────────────────────────────────────────────────────
-# models/fraud_processor.pkl was pickled straight out of the training
-# notebook, where `engineer_fraud_features` was a top-level function in the
-# notebook's `__main__` namespace, closing over a global `top_v_features`.
-# Python's pickle format stores plain functions *by reference* (module +
-# name), never by bytecode — so unpickling this FunctionTransformer needs a
-# function literally named `engineer_fraud_features` to exist in `__main__`
-# (this script, since Streamlit runs it as the entry point) at load time.
-# It's recreated verbatim below so `joblib.load(fraud_processor.pkl)`
-# succeeds. Without this block the app fails with:
-#   AttributeError: Can't get attribute 'engineer_fraud_features' on
-#   <module '__main__' ...>
 top_v_features = ["V17", "V14", "V12", "V10", "V16"]  # from the notebook's correlation ranking
-
 
 def engineer_fraud_features(data):
     df_feat = data.copy()
@@ -231,6 +220,134 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true
 st.markdown(EXTRA_CSS, unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────────────────
+# ANIMATED BACKGROUND — a full-page, cursor-reactive "security scan" network:
+# faint drifting nodes connect with thin lines, and any link near the cursor
+# lights up green like a live scan sweeping the page. Pure browser-side
+# canvas/JS, no Streamlit reruns triggered. It's injected via components.html
+# (which normally only renders inside its own little iframe box) — the script
+# reaches into `window.parent.document` to attach the canvas to the *actual*
+# page behind everything else (z-index -1, pointer-events disabled so it
+# never blocks clicks), and a one-line guard skips re-creating it if a canvas
+# is already running from an earlier script rerun.
+# NOTE: this relies on undocumented Streamlit DOM internals (parent-document
+# access from a component iframe), not an official API — it's a known,
+# widely-used trick but isn't guaranteed to survive future Streamlit
+# versions. If a future update ever renders it inert, this whole block can be
+# safely deleted with no effect on the rest of the app.
+# ──────────────────────────────────────────────────────────────────────────
+def render_cyber_background():
+    components.html(
+        """
+        <script>
+        (function() {
+            const doc = window.parent.document;
+            if (doc.getElementById('fs-cyber-canvas')) return;  // already running from a previous rerun
+
+            const style = doc.createElement('style');
+            style.textContent = `
+                [data-testid="stAppViewContainer"],
+                [data-testid="stHeader"],
+                .stApp { background: transparent !important; }
+                #fs-cyber-canvas {
+                    position: fixed;
+                    top: 0; left: 0;
+                    width: 100vw; height: 100vh;
+                    z-index: -1;
+                    pointer-events: none;
+                }
+            `;
+            doc.head.appendChild(style);
+
+            const canvas = doc.createElement('canvas');
+            canvas.id = 'fs-cyber-canvas';
+            doc.body.prepend(canvas);
+            const ctx = canvas.getContext('2d');
+
+            let w, h;
+            function resize() {
+                w = canvas.width = window.parent.innerWidth;
+                h = canvas.height = window.parent.innerHeight;
+            }
+            resize();
+            window.parent.addEventListener('resize', resize);
+
+            const NODE_COUNT = Math.max(30, Math.floor((w * h) / 18000));
+            const LINK_DIST = 140;
+            const CURSOR_RADIUS = 180;
+            const nodes = [];
+            for (let i = 0; i < NODE_COUNT; i++) {
+                nodes.push({
+                    x: Math.random() * w,
+                    y: Math.random() * h,
+                    vx: (Math.random() - 0.5) * 0.25,
+                    vy: (Math.random() - 0.5) * 0.25,
+                });
+            }
+
+            const mouse = { x: -9999, y: -9999 };
+            doc.addEventListener('mousemove', (e) => {
+                mouse.x = e.clientX;
+                mouse.y = e.clientY;
+            });
+            doc.addEventListener('mouseleave', () => {
+                mouse.x = -9999;
+                mouse.y = -9999;
+            });
+
+            function step() {
+                ctx.clearRect(0, 0, w, h);
+
+                for (const n of nodes) {
+                    n.x += n.vx;
+                    n.y += n.vy;
+                    if (n.x < 0 || n.x > w) n.vx *= -1;
+                    if (n.y < 0 || n.y > h) n.vy *= -1;
+                }
+
+                for (let i = 0; i < nodes.length; i++) {
+                    for (let j = i + 1; j < nodes.length; j++) {
+                        const a = nodes[i], b = nodes[j];
+                        const dx = a.x - b.x, dy = a.y - b.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < LINK_DIST) {
+                            const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+                            const cdx = midX - mouse.x, cdy = midY - mouse.y;
+                            const near = Math.sqrt(cdx * cdx + cdy * cdy) < CURSOR_RADIUS;
+                            ctx.strokeStyle = near
+                                ? `rgba(34, 197, 94, ${0.55 * (1 - dist / LINK_DIST)})`
+                                : `rgba(59, 130, 246, ${0.12 * (1 - dist / LINK_DIST)})`;
+                            ctx.lineWidth = near ? 1.2 : 0.6;
+                            ctx.beginPath();
+                            ctx.moveTo(a.x, a.y);
+                            ctx.lineTo(b.x, b.y);
+                            ctx.stroke();
+                        }
+                    }
+                }
+
+                for (const n of nodes) {
+                    const dx = n.x - mouse.x, dy = n.y - mouse.y;
+                    const near = Math.sqrt(dx * dx + dy * dy) < CURSOR_RADIUS;
+                    ctx.beginPath();
+                    ctx.arc(n.x, n.y, near ? 2.4 : 1.6, 0, Math.PI * 2);
+                    ctx.fillStyle = near ? 'rgba(34, 197, 94, 0.9)' : 'rgba(148, 163, 184, 0.5)';
+                    ctx.fill();
+                }
+
+                window.parent.requestAnimationFrame(step);
+            }
+            step();
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+render_cyber_background()
+
+# ──────────────────────────────────────────────────────────────────────────
 # MODEL LOADING
 # ──────────────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Loading trained artifacts…")
@@ -248,17 +365,49 @@ def load_models(use_autoencoder: bool):
             # hard-crash the whole process (verified — no try/except can
             # catch that). Confirming both imports succeed first keeps this
             # a normal, catchable failure instead.
-            import torch  # noqa: F401
+            import torch
             import pyod  # noqa: F401
-            layer1 = joblib.load(MODELS_DIR / "layer1_autoencoder.pkl")
+
+            # `layer1_autoencoder.pkl` was pickled on whatever machine ran
+            # the training notebook. If that machine had a GPU, the tensors
+            # inside the pickled PyOD model are tagged for a CUDA device —
+            # and unpickling those tensors on a CPU-only host raises:
+            #   RuntimeError: Attempting to deserialize object on a CUDA
+            #   device but torch.cuda.is_available() is False.
+            # This is unrelated to whether torch/pyod are installed; it's a
+            # device mismatch between where the file was saved and where
+            # it's being loaded. `torch.load(..., map_location="cpu")` is
+            # the fix, but joblib.load doesn't expose a map_location param —
+            # the CUDA tensors get unpickled deep inside joblib's call stack
+            # via torch's own tensor-rebuild machinery, which itself goes
+            # through torch.load. So we patch torch.load, just for the
+            # duration of this one call, to always remap storages to CPU.
+            _original_torch_load = torch.load
+
+            def _cpu_mapped_load(f, *args, **kwargs):
+                kwargs.setdefault("map_location", torch.device("cpu"))
+                return _original_torch_load(f, *args, **kwargs)
+
+            torch.load = _cpu_mapped_load
+            try:
+                layer1 = joblib.load(MODELS_DIR / "layer1_autoencoder.pkl")
+            finally:
+                torch.load = _original_torch_load  # don't leave the patch in place globally
+
             engine_name = "Deep Autoencoder (PyOD)"
             engine_is_full = True
+        except ModuleNotFoundError as e:
+            st.warning(
+                f"Couldn't load the Autoencoder Layer 1 model — `{e.name}` isn't installed "
+                "in this environment. Falling back to Isolation Forest."
+            )
+            layer1 = joblib.load(MODELS_DIR / "layer1_isolation_forest.pkl")
+            engine_name = "Isolation Forest (fallback)"
+            engine_is_full = False
         except Exception as e:  # noqa: BLE001 — deliberately broad, this is a soft fallback
             st.warning(
                 f"Couldn't load the Autoencoder Layer 1 model ({type(e).__name__}: {e}). "
-                "This almost always means `pyod`/`torch` aren't installed in this "
-                "environment — they're intentionally left out of requirements.txt to "
-                "keep cloud deployments lightweight. Falling back to Isolation Forest."
+                "Falling back to Isolation Forest."
             )
             layer1 = joblib.load(MODELS_DIR / "layer1_isolation_forest.pkl")
             engine_name = "Isolation Forest (fallback)"
@@ -342,8 +491,20 @@ def safe_image(path: Path, **kwargs):
     instead of crashing the whole script run. (Caught in testing: an empty
     placeholder PNG committed to images/ took down the entire app with an
     uncaught PIL.UnidentifiedImageError — st.image has no built-in guard
-    against that.)"""
-    if not path.exists() or path.stat().st_size == 0:
+    against that.)
+
+    Missing/empty files used to fail completely silently, which made a
+    genuinely-missing asset in a deployed environment indistinguishable from
+    "nothing to show here" — surface it instead so it's obvious which file
+    needs to be re-added/re-uploaded (check: does the file exist in images/
+    on the deployed host, is it non-zero bytes there, and does its filename
+    match exactly, including case — Streamlit Cloud runs on case-sensitive
+    Linux, so `KMeans.png` on disk won't match a `kmeans.png` reference)."""
+    if not path.exists():
+        st.caption(f"🖼️ Image not found: `{path.name}` — check it was deployed to `images/`.")
+        return
+    if path.stat().st_size == 0:
+        st.caption(f"🖼️ Image file is empty: `{path.name}`.")
         return
     try:
         st.image(str(path), **kwargs)
@@ -458,8 +619,8 @@ with st.sidebar:
     )
     st.caption(
         "Layer 1 always tries the full Deep Autoencoder architecture from the notebook first, "
-        "falling back to Isolation Forest automatically only if `pyod`/`torch` aren't installed — "
-        "no manual switch, and this diagram doesn't change based on any selection."
+        "falling back to Isolation Forest automatically if it can't be loaded (missing dependencies "
+        "or a device mismatch) — no manual switch, and this diagram doesn't change based on any selection."
     )
 
     st.divider()
@@ -779,8 +940,6 @@ elif page == PAGES[1]:
             <div class="fs-metric-value">{value}</div></div>""",
             unsafe_allow_html=True,
         )
-
-    safe_image(IMAGES_DIR / "dashboard.png", width='stretch')
 
     naive_accuracy = 284315 / 284807
     st.markdown(
@@ -1296,7 +1455,7 @@ elif page == PAGES[5]:
           <div class="fs-flow-arrow">→</div>
           <details class="fs-flow-card layer1">
             <summary>3️⃣ Layer 1 — Anomaly Gate</summary>
-            <p>Always tries the full Deep Autoencoder from the notebook first; falls back to an Isolation Forest automatically if pyod/torch aren't installed. Flags structural outliers before any label is consulted.</p>
+            <p>Always tries the full Deep Autoencoder from the notebook first; falls back to an Isolation Forest automatically if it can't be loaded. Flags structural outliers before any label is consulted.</p>
           </details>
           <div class="fs-flow-arrow">→</div>
           <details class="fs-flow-card reject">
