@@ -16,3 +16,4 @@ joblib
 
 streamlit
 plotly
+pyod
