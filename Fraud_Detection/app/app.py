@@ -33,7 +33,19 @@ ZERO_TX = {col: 0.0 for col in RAW_COLS}
 # ──────────────────────────────────────────────────────────────────────────
 # COMPATIBILITY SHIM — DO NOT REMOVE
 # ──────────────────────────────────────────────────────────────────────────
+# models/fraud_processor.pkl was pickled straight out of the training
+# notebook, where `engineer_fraud_features` was a top-level function in the
+# notebook's `__main__` namespace, closing over a global `top_v_features`.
+# Python's pickle format stores plain functions *by reference* (module +
+# name), never by bytecode — so unpickling this FunctionTransformer needs a
+# function literally named `engineer_fraud_features` to exist in `__main__`
+# (this script, since Streamlit runs it as the entry point) at load time.
+# It's recreated verbatim below so `joblib.load(fraud_processor.pkl)`
+# succeeds. Without this block the app fails with:
+#   AttributeError: Can't get attribute 'engineer_fraud_features' on
+#   <module '__main__' ...>
 top_v_features = ["V17", "V14", "V12", "V10", "V16"]  # from the notebook's correlation ranking
+
 
 def engineer_fraud_features(data):
     df_feat = data.copy()
@@ -115,6 +127,40 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true
 @keyframes fsFadeIn {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
+}
+.fs-page-banner {
+    border-left: 4px solid #3b82f6;
+    background: rgba(59, 130, 246, 0.08);
+    border-radius: 0 12px 12px 0;
+    padding: 0.75rem 1.1rem;
+    margin: 0.2rem 0 1.4rem 0;
+}
+.fs-page-banner h2 { margin: 0 0 0.15rem 0; font-size: 1.3rem; }
+.fs-page-banner p { margin: 0; color: #94a3b8; font-size: 0.9rem; }
+.fs-insight-card {
+    background: linear-gradient(135deg, rgba(250, 204, 21, 0.10), rgba(59, 130, 246, 0.08));
+    border: 1px solid rgba(250, 204, 21, 0.35);
+    border-radius: 14px;
+    padding: 1.1rem 1.3rem;
+    margin: 0.8rem 0 1.3rem 0;
+}
+.fs-insight-card h4 { margin-top: 0; }
+.fs-cost-fn-card {
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 14px;
+    padding: 1.1rem 1.4rem;
+    margin: 0.9rem auto;
+    max-width: 720px;
+    text-align: center;
+}
+.fs-cost-fn-card code {
+    display: block;
+    font-size: 1.05rem;
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    padding: 0.6rem 0.8rem;
+    margin: 0.6rem 0;
 }
 .fs-verdict { border-radius: 16px; padding: 1.4rem 1.6rem; margin: 0.5rem 0 1rem 0; }
 .fs-verdict h2 { margin-top: 0; }
@@ -447,12 +493,51 @@ st.markdown(
 )
 
 # ──────────────────────────────────────────────────────────────────────────
+# PAGE HEADLINE — changes with the sidebar nav selection, sits just below
+# the static "Fraud Sentinel" brand hero above.
+# ──────────────────────────────────────────────────────────────────────────
+PAGE_HEADLINES = {
+    PAGES[0]: ("⚡ Live Transaction Check", "Score a single transaction through both cascade layers in real time."),
+    PAGES[1]: ("📊 Overview", "Dataset snapshot and production model health, at a glance."),
+    PAGES[2]: ("📈 Model Performance", "Precision, recall, thresholds, and business cost — in depth."),
+    PAGES[3]: ("🧠 Explainability", "Why the cascade makes the decisions it does."),
+    PAGES[4]: ("📁 Batch Scoring", "Score an entire file of transactions at once."),
+    PAGES[5]: ("ℹ️ How It Works", "The architecture behind the cascade, step by step."),
+}
+_headline, _subline = PAGE_HEADLINES[page]
+st.markdown(
+    f"""
+    <div class="fs-page-banner fs-fade-in">
+        <h2>{_headline}</h2>
+        <p>{_subline}</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ──────────────────────────────────────────────────────────────────────────
 # SESSION STATE DEFAULTS
 # ──────────────────────────────────────────────────────────────────────────
 st.session_state.setdefault("tx_values", dict(MOCK_LEGIT))
 st.session_state.setdefault("tx_result", None)
 st.session_state.setdefault("tx_row", None)
 st.session_state.setdefault("tx_history", [])
+
+
+def apply_preset(values: dict):
+    """Sets tx_values AND directly seeds every underlying widget key.
+    Streamlit widgets that have a `key` ignore their `value=` argument on
+    reruns once that key already exists in session_state — which is exactly
+    why "Clear form" previously looked like it did nothing to the V-boxes:
+    tx_values was updated, but the 28 number_input widgets (keyed v_V1..v_V28)
+    already had their own stale session_state entries from the first render
+    and kept showing those instead. Writing directly to those keys here,
+    before the widgets are instantiated, is what actually resets them."""
+    st.session_state["tx_values"] = dict(values)
+    st.session_state["tx_time_input"] = float(values.get("Time", 0.0))
+    st.session_state["tx_amount_input"] = float(values.get("Amount", 0.0))
+    for _vcol in [f"V{n}" for n in range(1, 29)]:
+        st.session_state[f"v_{_vcol}"] = float(values.get(_vcol, 0.0))
 
 # ══════════════════════════════════════════════════════════════════════════
 # PAGE — LIVE TRANSACTION CHECK  (default landing page)
@@ -474,18 +559,18 @@ if page == PAGES[0]:
 
             preset_cols = st.columns(3)
             if preset_cols[0].button("📥 Load sample: legitimate transaction", width='stretch'):
-                st.session_state["tx_values"] = dict(MOCK_LEGIT)
+                apply_preset(MOCK_LEGIT)
             if preset_cols[1].button("📥 Load sample: fraudulent transaction", width='stretch'):
-                st.session_state["tx_values"] = dict(MOCK_FRAUD)
+                apply_preset(MOCK_FRAUD)
             if preset_cols[2].button("🧹 Clear form", width='stretch'):
-                st.session_state["tx_values"] = dict(ZERO_TX)
+                apply_preset(ZERO_TX)
 
             defaults = st.session_state.get("tx_values", dict(MOCK_LEGIT))
 
             with st.form("transaction_form"):
                 top_row = st.columns(2)
-                time_val = top_row[0].number_input("Time (seconds since first transaction)", value=float(defaults.get("Time", 0.0)), step=1.0)
-                amount_val = top_row[1].number_input("Amount ($)", value=float(defaults.get("Amount", 0.0)), min_value=0.0, step=1.0)
+                time_val = top_row[0].number_input("Time (seconds since first transaction)", value=float(defaults.get("Time", 0.0)), step=1.0, key="tx_time_input")
+                amount_val = top_row[1].number_input("Amount ($)", value=float(defaults.get("Amount", 0.0)), min_value=0.0, step=1.0, key="tx_amount_input")
 
                 st.caption("PCA-anonymized features V1–V28 (as provided by the source dataset):")
                 v_values = {}
@@ -546,6 +631,15 @@ if page == PAGES[0]:
                 else:
                     risk_level = "🟢 Low"
 
+            # Confidence = how far the classifier's probability sits from the
+            # 50/50 midpoint, i.e. max(p, 1-p) — standard reading of a binary
+            # probability as a certainty score. Layer 1 has no probability
+            # scale to do the same math with, so it gets a qualitative label.
+            if result["probability"] is not None:
+                confidence_level = f"{max(result['probability'], 1 - result['probability']):.1%}"
+            else:
+                confidence_level = "High (structural anomaly)"
+
             if result["probability"] is not None:
                 prob_line = f"Fraud probability: <b>{result['probability']:.2%}</b> (threshold {result.get('threshold', 0):.0%})"
             else:
@@ -567,11 +661,11 @@ if page == PAGES[0]:
                 unsafe_allow_html=True,
             )
 
-            r1, r2, r3 = st.columns(3)
+            r1, r2, r3, r4 = st.columns(4)
             for col, label, value in zip(
-                [r1, r2, r3],
-                ["Layer 1 Result", "Layer 2 Result", "Risk Level"],
-                [layer1_result, layer2_result, risk_level],
+                [r1, r2, r3, r4],
+                ["Layer 1 Result", "Layer 2 Result", "Risk Level", "Confidence Level"],
+                [layer1_result, layer2_result, risk_level, confidence_level],
             ):
                 col.markdown(
                     f"""<div class="fs-card"><div class="fs-metric-label">{label}</div>
@@ -674,7 +768,6 @@ if page == PAGES[0]:
 # PAGE — OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════
 elif page == PAGES[1]:
-    st.markdown("#### Dataset & Production Model at a Glance")
     c1, c2, c3, c4 = st.columns(4)
     for col, label, value in zip(
         [c1, c2, c3, c4],
@@ -688,6 +781,22 @@ elif page == PAGES[1]:
         )
 
     safe_image(IMAGES_DIR / "dashboard.png", width='stretch')
+
+    naive_accuracy = 284315 / 284807
+    st.markdown(
+        f"""
+        <div class="fs-insight-card">
+            <h4>💡 Why accuracy alone is misleading here</h4>
+            <p>A model that predicts <b>"legitimate" for every single transaction</b> — never once
+            looking at the data — would score <b>{naive_accuracy:.3%} accuracy</b> on this dataset,
+            while catching exactly 0% of fraud. That's the trap of a 0.172% positive rate: accuracy
+            barely moves no matter how bad the model is at the one thing that actually matters. It's
+            why every metric on this app leans on <b>Precision, Recall, and PR-AUC</b> instead —
+            they're the only ones that actually penalize missed fraud.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown("#### Class Imbalance")
     dist_df = pd.DataFrame({"Class": ["Legitimate", "Fraud"], "Count": [284315, 492]})
@@ -721,25 +830,99 @@ elif page == PAGES[1]:
         st.plotly_chart(pie, width='stretch')
         st.caption("Same split, proportional view.")
 
+    st.markdown("#### Dataset Behavior")
+    behavior_charts = {
+        "amount_distribution.png": ("Transaction Amount Distribution", "Overall distribution of transaction amounts across the dataset."),
+        "fraud_by_hour.png": ("Fraud by Hour", "Fraud frequency by hour of day — temporal pattern in when fraud occurs."),
+        "amount_comparison_boxplot.png": ("Fraud vs. Legitimate Amount", "Box-plot comparison of transaction amounts between fraud and legitimate classes."),
+    }
+    bcols = st.columns(3)
+    for col, (fname, (title, caption)) in zip(bcols, behavior_charts.items()):
+        with col:
+            st.markdown(f"###### {title}")
+            safe_image(IMAGES_DIR / fname, width='stretch')
+            st.caption(caption)
+
     st.markdown("#### Production Model Snapshot")
-    metric_names = ["Precision", "Recall", "F1-Score", "ROC-AUC", "PR-AUC"]
-    metric_vals = [0.9483, 0.7333, 0.8271, 0.9793, 0.8042]
-    radar = go.Figure()
-    radar.add_trace(go.Scatterpolar(
-        r=metric_vals + [metric_vals[0]], theta=metric_names + [metric_names[0]],
-        fill="toself", line_color="#3b82f6", fillcolor="rgba(59,130,246,0.35)",
-        name="Calibrated CatBoost",
-    ))
-    radar.update_layout(
-        polar=dict(
-            bgcolor="rgba(0,0,0,0)",
-            radialaxis=dict(visible=True, range=[0, 1], color="#94a3b8"),
-            angularaxis=dict(color="#e2e8f0"),
-        ),
-        showlegend=False, height=420, **PLOT_BG,
-    )
-    st.plotly_chart(radar, width='stretch')
-    st.caption("The five headline metrics for the production Layer 2 model, in one shape — full write-up and comparison against other candidate models is on the Model Performance page.")
+    snap_cols = st.columns([3, 2])
+    with snap_cols[0]:
+        metric_names = ["Precision", "Recall", "F1-Score", "ROC-AUC", "PR-AUC"]
+        metric_vals = [0.9483, 0.7333, 0.8271, 0.9793, 0.8042]
+        radar = go.Figure()
+        radar.add_trace(go.Scatterpolar(
+            r=metric_vals + [metric_vals[0]], theta=metric_names + [metric_names[0]],
+            fill="toself", line_color="#3b82f6", fillcolor="rgba(59,130,246,0.35)",
+            name="Calibrated CatBoost",
+        ))
+        radar.update_layout(
+            polar=dict(
+                bgcolor="rgba(0,0,0,0)",
+                radialaxis=dict(visible=True, range=[0, 1], color="#94a3b8"),
+                angularaxis=dict(color="#e2e8f0"),
+            ),
+            showlegend=False, height=380, **PLOT_BG,
+        )
+        st.plotly_chart(radar, width='stretch')
+        st.caption("The five headline metrics for the production Layer 2 model, in one shape.")
+    with snap_cols[1]:
+        st.markdown(
+            """<div class="fs-card"><div class="fs-metric-label">Model Status</div>
+            <div class="fs-metric-value" style="font-size:1rem;">Calibrated CatBoost</div>
+            <div style="color:#94a3b8; font-size:0.82rem; margin-top:0.3rem;">
+                Calibration: Isotonic &nbsp;·&nbsp; Deployment: ✅ Production-ready
+            </div></div>""",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            """<div class="fs-card" style="margin-top:0.7rem;"><div class="fs-metric-label">Recommended Operating Threshold</div>
+            <div class="fs-metric-value" style="font-size:1rem;">0.25 (&gt;$1,000) · 0.50 (otherwise)</div>
+            <div style="color:#94a3b8; font-size:0.82rem; margin-top:0.3rem;">
+                Amount-aware: a missed high-value fraud costs far more than a false alarm, so
+                large transactions are held to a lower bar to flag.
+            </div></div>""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("#### Operational Risk Summary")
+    metrics_path_ov = RESULTS_DIR / "metrics.csv"
+    if metrics_path_ov.exists():
+        df_metrics_ov = pd.read_csv(metrics_path_ov)
+        if {"Model", "Recall_Fraud", "Precision_Fraud"}.issubset(df_metrics_ov.columns):
+            prod_rows_ov = df_metrics_ov[df_metrics_ov["Model"].astype(str).str.contains("CatBoost", case=False, na=False)]
+            prod_row_ov = prod_rows_ov.iloc[0] if len(prod_rows_ov) else df_metrics_ov.loc[df_metrics_ov["PR_AUC"].idxmax()]
+            recall_ov = float(prod_row_ov["Recall_Fraud"])
+            precision_ov = float(prod_row_ov["Precision_Fraud"])
+            tp_ov = recall_ov * 492
+            fp_ov = tp_ov * (1 - precision_ov) / precision_ov if precision_ov > 0 else 0.0
+
+            o1, o2, o3 = st.columns(3)
+            o1.markdown(
+                f"""<div class="fs-card"><div class="fs-metric-label">False Alarm Rate</div>
+                <div class="fs-metric-value">{fp_ov / 284315:.3%}</div>
+                <div style="color:#94a3b8; font-size:0.8rem;">≈ {fp_ov:,.0f} legitimate transactions flagged</div></div>""",
+                unsafe_allow_html=True,
+            )
+            o2.markdown(
+                f"""<div class="fs-card"><div class="fs-metric-label">Fraud Capture Rate</div>
+                <div class="fs-metric-value">{recall_ov:.2%}</div>
+                <div style="color:#94a3b8; font-size:0.8rem;">≈ {tp_ov:,.0f} of 492 fraud cases caught</div></div>""",
+                unsafe_allow_html=True,
+            )
+            impact_bits = []
+            if "Banking_Risk_Cost_USD" in df_metrics_ov.columns:
+                impact_bits.append(f"Estimated banking risk cost: <b>${float(prod_row_ov['Banking_Risk_Cost_USD']):,.0f}</b>")
+            if "Missed_Fraud_Amount_USD" in df_metrics_ov.columns:
+                impact_bits.append(f"Missed fraud exposure: <b>${float(prod_row_ov['Missed_Fraud_Amount_USD']):,.0f}</b>")
+            o3.markdown(
+                f"""<div class="fs-card"><div class="fs-metric-label">Business Impact</div>
+                <div style="font-size:0.85rem; margin-top:0.4rem; line-height:1.6;">{"<br>".join(impact_bits) if impact_bits else "Add Banking_Risk_Cost_USD / Missed_Fraud_Amount_USD to results/metrics.csv for a dollar estimate."}</div></div>""",
+                unsafe_allow_html=True,
+            )
+            st.caption("Full interactive version — with an adjustable threshold slider and cost assumptions — is on the Model Performance page.")
+        else:
+            st.info("Operational risk summary needs `Recall_Fraud` and `Precision_Fraud` columns in results/metrics.csv.")
+    else:
+        st.info(f"results/metrics.csv not found at {metrics_path_ov}.")
 
 # ══════════════════════════════════════════════════════════════════════════
 # PAGE — MODEL PERFORMANCE
@@ -823,6 +1006,102 @@ elif page == PAGES[2]:
         with st.expander("📋 What this shows"):
             st.markdown(detail)
 
+    st.markdown("#### Interactive Cost Simulator")
+    if metrics_path.exists() and {"Model", "Recall_Fraud", "Precision_Fraud"}.issubset(df_metrics.columns):
+        prod_rows = df_metrics[df_metrics["Model"].astype(str).str.contains("CatBoost", case=False, na=False)]
+        prod_row = prod_rows.iloc[0] if len(prod_rows) else df_metrics.loc[df_metrics["PR_AUC"].idxmax()]
+
+        TOTAL_FRAUD, TOTAL_LEGIT = 492, 284315
+        prod_threshold = 0.375  # midpoint of the real amount-aware 0.25 / 0.50 split
+        tp_prod = float(prod_row["Recall_Fraud"]) * TOTAL_FRAUD
+        fn_prod = TOTAL_FRAUD - tp_prod
+        precision = float(prod_row["Precision_Fraud"])
+        fp_prod = tp_prod * (1 - precision) / precision if precision > 0 else 0.0
+        default_fn_cost = (
+            float(prod_row["Missed_Fraud_Amount_USD"]) / fn_prod
+            if "Missed_Fraud_Amount_USD" in df_metrics.columns and fn_prod > 0 else 500.0
+        )
+
+        st.caption(
+            "A simplified, interactive approximation — not a re-run of the model at every threshold. "
+            "It interpolates false-positive and false-negative counts between three known points: "
+            "flag-everything (threshold 0), flag-nothing (threshold 1), and the real production model's "
+            "measured recall/precision at its actual operating threshold."
+        )
+
+        sim_cols = st.columns([2, 1, 1])
+        sim_threshold = sim_cols[0].slider("Decision threshold", 0.0, 1.0, prod_threshold, 0.01)
+        fp_cost = sim_cols[1].number_input("Avg. cost per false alarm ($)", value=50.0, min_value=0.0, step=5.0)
+        fn_cost = sim_cols[2].number_input("Avg. loss per missed fraud ($)", value=round(default_fn_cost, 2), min_value=0.0, step=10.0)
+
+        def _interp_counts(t):
+            fp = np.interp(t, [0, prod_threshold, 1], [TOTAL_LEGIT, fp_prod, 0])
+            fn = np.interp(t, [0, prod_threshold, 1], [0, fn_prod, TOTAL_FRAUD])
+            return fp, fn
+
+        cur_fp, cur_fn = _interp_counts(sim_threshold)
+        cur_fp_cost, cur_fn_cost = cur_fp * fp_cost, cur_fn * fn_cost
+        cur_total = cur_fp_cost + cur_fn_cost
+
+        cc1, cc2, cc3 = st.columns(3)
+        for col, label, value in zip(
+            [cc1, cc2, cc3],
+            ["False-Positive Cost", "False-Negative Loss", "Total Estimated Cost"],
+            [f"${cur_fp_cost:,.0f} ({cur_fp:,.0f} alerts)", f"${cur_fn_cost:,.0f} ({cur_fn:,.0f} missed)", f"${cur_total:,.0f}"],
+        ):
+            col.markdown(
+                f"""<div class="fs-card"><div class="fs-metric-label">{label}</div>
+                <div class="fs-metric-value">{value}</div></div>""",
+                unsafe_allow_html=True,
+            )
+
+        st.markdown(
+            f"""
+            <div class="fs-cost-fn-card">
+                <b>Custom Banking Risk Cost Function</b>
+                <code>Total Cost(t) = FP(t) &times; ${fp_cost:,.0f} + FN(t) &times; ${fn_cost:,.0f}</code>
+                <div style="color:#94a3b8; font-size:0.85rem; text-align:left;">
+                    FP(t) is the number of false alarms at threshold t — annoyed legitimate customers and
+                    review overhead. FN(t) is the number of missed fraud cases at threshold t — the actual
+                    dollar loss that goes uncaught. Lower the threshold and more fraud gets caught but more
+                    legitimate customers get flagged; raise it and false alarms drop but more fraud slips
+                    through. The bank's real optimum sits wherever this curve is lowest — rarely at either extreme.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        sweep = np.linspace(0, 1, 60)
+        fp_sweep, fn_sweep = _interp_counts(sweep)
+        total_sweep = fp_sweep * fp_cost + fn_sweep * fn_cost
+
+        cost_cols = st.columns(2)
+        with cost_cols[0]:
+            line_fig = go.Figure()
+            line_fig.add_trace(go.Scatter(x=sweep, y=total_sweep, mode="lines", line=dict(color="#facc15", width=3), name="Total cost"))
+            line_fig.add_vline(x=sim_threshold, line_dash="dot", line_color="#3b82f6")
+            line_fig.update_layout(height=340, xaxis_title="Decision threshold", yaxis_title="Estimated total cost ($)", **PLOT_BG)
+            st.plotly_chart(line_fig, width='stretch')
+            st.caption("Cost vs. threshold — the dotted line marks your current slider position.")
+        with cost_cols[1]:
+            sample_thresholds = sorted(set([0.1, 0.25, 0.375, 0.5, 0.75, round(sim_threshold, 2)]))
+            fp_s, fn_s = _interp_counts(np.array(sample_thresholds))
+            bd_long = pd.DataFrame({
+                "Threshold": [f"{t:.2f}" for t in sample_thresholds] * 2,
+                "Cost Type": ["False-Positive Cost"] * len(sample_thresholds) + ["False-Negative Loss"] * len(sample_thresholds),
+                "Cost ($)": list(fp_s * fp_cost) + list(fn_s * fn_cost),
+            })
+            bd_fig = px.bar(
+                bd_long, x="Threshold", y="Cost ($)", color="Cost Type", barmode="stack",
+                color_discrete_map={"False-Positive Cost": "#3b82f6", "False-Negative Loss": "#ef4444"},
+            )
+            bd_fig.update_layout(height=340, **PLOT_BG)
+            st.plotly_chart(bd_fig, width='stretch')
+            st.caption("Cost breakdown at a few sample thresholds (including your current one) — shows how the FP/FN mix shifts.")
+    else:
+        st.info("The interactive cost simulator needs `Recall_Fraud` and `Precision_Fraud` columns (ideally also `Missed_Fraud_Amount_USD`) in results/metrics.csv.")
+
 # ══════════════════════════════════════════════════════════════════════════
 # PAGE — EXPLAINABILITY
 # ══════════════════════════════════════════════════════════════════════════
@@ -896,6 +1175,17 @@ elif page == PAGES[3]:
         "clearly inside their own cluster and far from neighboring ones.",
         "This chart was used during exploratory analysis (not the production pipeline) to sanity-check "
         "how naturally the data separates before committing to the two-layer cascade design.",
+    )
+    explainability_block(
+        "K-Means Clustering",
+        "kmeans_clustering.png",
+        "K-Means applied at the chosen k, visualizing how transactions group before any fraud label is used.",
+        "Each color is one K-Means cluster in the reduced feature space. This is the direct follow-up to "
+        "the silhouette analysis above — once k is chosen, this is what the resulting clusters actually look like.",
+        "If fraud transactions consistently fall into the same handful of clusters, that's supporting "
+        "evidence for the anomaly-gate design of Layer 1; if fraud is scattered evenly across clusters "
+        "instead, it suggests fraud doesn't have one single 'shape' — reinforcing why Layer 2's supervised "
+        "classifier does the heavier lifting rather than relying on clustering alone.",
     )
     explainability_block(
         "Layer 1 Anomaly Score Separation",
