@@ -10,7 +10,7 @@ This repository implements a production-ready machine learning pipeline for dete
 
 To address that, this project moves beyond standard classification and implements a **Dual-Layer Cascade Architecture** combining unsupervised deep learning with supervised gradient boosting.
 
-**[Live demo →](#)** *(add your Streamlit Cloud link here)*
+**[Live demo →](#)** *https://fraud-detection-farhan.streamlit.app/*
 
 ---
 
