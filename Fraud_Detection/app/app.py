@@ -509,11 +509,25 @@ def load_models(use_autoencoder: bool):
 # Isolation Forest and PyOD's Autoencoder use different label/score
 # conventions (sklearn: -1 = anomaly; PyOD: 1 = anomaly), so Layer 1 is
 # dispatched by model type rather than reusing one hardcoded threshold.
-# Layer 2's amount-aware thresholds (0.25 / 0.50) are the notebook's actual
+# Layer 2's amount-aware thresholds (0.20 / 0.50) are the notebook's actual
 # business thresholds and are reused as-is — they're a property of the
 # classifier's calibrated probabilities, not of whichever Layer 1 engine
 # is active.
+#
+# CUSTOM BANKING RISK COST
+# Every verdict also carries a Risk_Cost figure, from the same cost-sensitive
+# function used to pick the production threshold in the notebook:
+#   Banking Risk Cost = (ALPHA × Missed Fraud Amount) + (BETA × False Alarm Count)
+# Applied per-transaction:
+#   - Blocked at Layer 1  -> $0.00, the fraud never reaches funds clearance
+#   - Rejected at Layer 2 -> BETA, the fixed friction/support cost of a false alarm
+#   - Approved            -> ALPHA * probability * amount, the expected loss if this
+#                            approved transaction turns out to be fraud
 # ──────────────────────────────────────────────────────────────────────────
+ALPHA = 1.0   # cost multiplier on missed-fraud dollar amount
+BETA = 50.0   # fixed operational cost of one false alarm (customer friction)
+
+
 def layer1_is_anomaly(model, processed) -> bool:
     pred = model.predict(processed)
     if "pyod" in type(model).__module__:
@@ -541,10 +555,12 @@ def cascade_predict_single(row_df, processor, layer1_model, layer2_model):
             "amount": tx_amount,
             "anomaly_score": layer1_score(layer1_model, processed),
             "probability": None,
+            "risk_cost": 0.0,
+            "risk_cost_label": "Prevented",
         }
 
     probability = float(layer2_model.predict_proba(processed)[0, 1])
-    threshold = 0.25 if tx_amount > 1000 else 0.50
+    threshold = 0.20 if tx_amount > 1000 else 0.50
 
     if probability >= threshold:
         return {
@@ -556,8 +572,11 @@ def cascade_predict_single(row_df, processor, layer1_model, layer2_model):
             "anomaly_score": layer1_score(layer1_model, processed),
             "probability": probability,
             "threshold": threshold,
+            "risk_cost": BETA,
+            "risk_cost_label": "Friction Cost",
         }
 
+    residual_risk = ALPHA * probability * tx_amount
     return {
         "status": "APPROVED",
         "label": "✅ Approved",
@@ -567,6 +586,8 @@ def cascade_predict_single(row_df, processor, layer1_model, layer2_model):
         "anomaly_score": layer1_score(layer1_model, processed),
         "probability": probability,
         "threshold": threshold,
+        "risk_cost": residual_risk,
+        "risk_cost_label": "Residual Risk",
     }
 
 
@@ -614,7 +635,7 @@ def cascade_predict_batch(df_in, processor, layer1_model, layer2_model):
     if remaining.any():
         probs[remaining] = layer2_model.predict_proba(processed[remaining])[:, 1]
 
-    thresholds = np.where(amounts > 1000, 0.25, 0.50)
+    thresholds = np.where(amounts > 1000, 0.20, 0.50)
     rejected = remaining & (probs >= thresholds)
     approved = remaining & ~rejected
 
@@ -624,10 +645,21 @@ def cascade_predict_batch(df_in, processor, layer1_model, layer2_model):
         default="Approved",
     )
 
+    # Custom Banking Risk Cost, same cost-sensitive function used to pick the
+    # production threshold: Blocked -> $0 (prevented), Rejected -> BETA (fixed
+    # friction cost), Approved -> ALPHA * probability * amount (expected loss
+    # if this approved transaction turns out to be fraud).
+    risk_cost = np.select(
+        [blocked, rejected, approved],
+        [0.0, BETA, ALPHA * np.nan_to_num(probs) * amounts],
+        default=0.0,
+    )
+
     out = df_in.copy()
     out["Anomaly_Score"] = scores
     out["Fraud_Probability"] = probs
     out["Decision"] = decision
+    out["Risk_Cost"] = risk_cost
     return out
 
 
@@ -900,7 +932,8 @@ if page == PAGES[0]:
                     <div class="fs-verdict-detail">
                         Amount: <b>${result['amount']:,.2f}</b> &nbsp;|&nbsp;
                         Layer 1 anomaly score: <b>{result['anomaly_score']:.4f}</b> &nbsp;|&nbsp;
-                        {prob_line}
+                        {prob_line} &nbsp;|&nbsp;
+                        Banking risk cost: <b>${result['risk_cost']:,.2f}</b> ({result['risk_cost_label']})
                     </div>
                 </div>
                 """,
@@ -919,15 +952,16 @@ if page == PAGES[0]:
                     unsafe_allow_html=True,
                 )
 
-            m1, m2, m3, m4 = st.columns(4)
+            m1, m2, m3, m4, m5 = st.columns(5)
             for col, label, value in zip(
-                [m1, m2, m3, m4],
-                ["Amount", "Layer 1 Anomaly Score", "Fraud Probability", "Decision Threshold"],
+                [m1, m2, m3, m4, m5],
+                ["Amount", "Layer 1 Anomaly Score", "Fraud Probability", "Decision Threshold", "Banking Risk Cost"],
                 [
                     f"${result['amount']:,.2f}",
                     f"{result['anomaly_score']:.4f}",
                     f"{result['probability']:.2%}" if result["probability"] is not None else "N/A",
                     f"{result.get('threshold', 0):.0%}" if result.get("threshold") is not None else "—",
+                    f"${result['risk_cost']:,.2f}",
                 ],
             ):
                 col.markdown(
@@ -1119,7 +1153,7 @@ elif page == PAGES[1]:
         )
         st.markdown(
             """<div class="fs-card" style="margin-top:0.7rem;"><div class="fs-metric-label">Recommended Operating Threshold</div>
-            <div class="fs-metric-value" style="font-size:1rem;">0.25 (&gt;$1,000) · 0.50 (otherwise)</div>
+            <div class="fs-metric-value" style="font-size:1rem;">0.20 (&gt;$1,000) · 0.50 (otherwise)</div>
             <div style="color:#94a3b8; font-size:0.82rem; margin-top:0.3rem;">
                 Amount-aware: a missed high-value fraud costs far more than a false alarm, so
                 large transactions are held to a lower bar to flag.
@@ -1239,7 +1273,7 @@ elif page == PAGES[2]:
             "Confusion matrix and business-impact sensitivity across decision thresholds.",
             "Sweeps the decision threshold across its full range and tracks the resulting confusion "
             "matrix and estimated dollar cost. This is exactly where the amount-aware thresholds used "
-            "live (0.25 above $1,000, 0.50 otherwise) come from — high-value transactions get a "
+            "live (0.20 above $1,000, 0.50 otherwise) come from — high-value transactions get a "
             "lower bar to flag because a missed high-value fraud costs far more than a false alarm.",
         ),
     }
@@ -1256,7 +1290,7 @@ elif page == PAGES[2]:
         prod_row = prod_rows.iloc[0] if len(prod_rows) else df_metrics.loc[df_metrics["PR_AUC"].idxmax()]
 
         TOTAL_FRAUD, TOTAL_LEGIT = 492, 284315
-        prod_threshold = 0.375  # midpoint of the real amount-aware 0.25 / 0.50 split
+        prod_threshold = 0.35  # midpoint of the real amount-aware 0.20 / 0.50 split
         tp_prod = float(prod_row["Recall_Fraud"]) * TOTAL_FRAUD
         fn_prod = TOTAL_FRAUD - tp_prod
         precision = float(prod_row["Precision_Fraud"])
@@ -1329,7 +1363,7 @@ elif page == PAGES[2]:
             st.plotly_chart(line_fig, width='stretch')
             st.caption("Cost vs. threshold — the dotted line marks your current slider position.")
         with cost_cols[1]:
-            sample_thresholds = sorted(set([0.1, 0.25, 0.375, 0.5, 0.75, round(sim_threshold, 2)]))
+            sample_thresholds = sorted(set([0.1, 0.20, 0.35, 0.5, 0.75, round(sim_threshold, 2)]))
             fp_s, fn_s = _interp_counts(np.array(sample_thresholds))
             bd_long = pd.DataFrame({
                 "Threshold": [f"{t:.2f}" for t in sample_thresholds] * 2,
@@ -1465,20 +1499,25 @@ elif page == PAGES[4]:
                     with st.spinner(f"Scoring {len(batch_df):,} transactions…"):
                         scored = cascade_predict_batch(batch_df, processor, layer1_model, layer2_model)
 
-                    b1, b2, b3 = st.columns(3)
+                    b1, b2, b3, b4 = st.columns(4)
                     n_blocked = (scored["Decision"] == "Blocked (Layer 1)").sum()
                     n_rejected = (scored["Decision"] == "Rejected (Layer 2)").sum()
                     n_approved = (scored["Decision"] == "Approved").sum()
+                    total_risk_cost = float(scored["Risk_Cost"].sum())
                     for col, label, value in zip(
-                        [b1, b2, b3],
-                        ["Blocked — Layer 1", "Rejected — Layer 2", "Approved"],
-                        [n_blocked, n_rejected, n_approved],
+                        [b1, b2, b3, b4],
+                        ["Blocked — Layer 1", "Rejected — Layer 2", "Approved", "Total Banking Risk Cost"],
+                        [f"{n_blocked:,}", f"{n_rejected:,}", f"{n_approved:,}", f"${total_risk_cost:,.2f}"],
                     ):
                         col.markdown(
                             f"""<div class="fs-card"><div class="fs-metric-label">{label}</div>
-                            <div class="fs-metric-value">{value:,}</div></div>""",
+                            <div class="fs-metric-value">{value}</div></div>""",
                             unsafe_allow_html=True,
                         )
+                    st.caption(
+                        "Total Banking Risk Cost = Σ (Blocked → $0, Rejected → $50 friction cost, "
+                        "Approved → probability × amount expected loss) across this batch."
+                    )
 
                     if "Class" in scored.columns:
                         flagged = scored["Decision"] != "Approved"
@@ -1556,7 +1595,7 @@ elif page == PAGES[5]:
           <div class="fs-flow-arrow">→</div>
           <details class="fs-flow-card layer2">
             <summary>4️⃣ Layer 2 — Calibrated CatBoost</summary>
-            <p>Trained on SMOTE-balanced data, then wrapped with isotonic calibration so its probability outputs are trustworthy. Applies amount-aware thresholds: 0.25 above $1,000, 0.50 otherwise.</p>
+            <p>Trained on SMOTE-balanced data, then wrapped with isotonic calibration so its probability outputs are trustworthy. Applies amount-aware thresholds: 0.20 above $1,000, 0.50 otherwise.</p>
           </details>
           <div class="fs-flow-arrow">→</div>
           <details class="fs-flow-card reject">
@@ -1596,7 +1635,7 @@ elif page == PAGES[5]:
 
     st.markdown("#### Decision Threshold by Amount")
     amt_range = np.linspace(0, 3000, 300)
-    thr_curve = np.where(amt_range > 1000, 0.25, 0.50)
+    thr_curve = np.where(amt_range > 1000, 0.20, 0.50)
     thr_fig = go.Figure()
     thr_fig.add_trace(go.Scatter(
         x=amt_range, y=thr_curve, mode="lines", line=dict(color="#facc15", width=3, shape="hv"),
@@ -1614,7 +1653,10 @@ elif page == PAGES[5]:
         "This app loads the real serialized artifacts from `models/` — it does not retrain on "
         "synthetic data. Layer 1 always attempts the notebook's full Deep Autoencoder architecture "
         "and only drops to Isolation Forest automatically when `pyod`/`torch` aren't available; both "
-        "were trained and saved during the original notebook run, and either is a legitimate Layer 1 choice."
+        "were trained and saved during the original notebook run, and either is a legitimate Layer 1 choice. "
+        "Every verdict also carries a live Custom Banking Risk Cost (Blocked → $0, Rejected → $50 "
+        "fixed friction cost, Approved → probability × amount expected loss) — the same cost function "
+        "used offline in the Model Performance simulator, now computed per transaction."
     )
 
     st.warning(
